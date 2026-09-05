@@ -1,9 +1,26 @@
+from flask import Flask
+from threading import Thread
 import json
 import os
 from datetime import datetime
 import discord
 from discord import app_commands
 from discord.ext import commands
+
+# สร้างเว็บเซิร์ฟเวอร์จำลองสำหรับเปิดพอร์ตเพื่อรันบน Render แบบฟรี
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is online and running!"
+
+def run():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -694,4 +711,6 @@ async def scrimsetup(interaction: discord.Interaction):
     await interaction.response.send_message("สร้างปุ่มติดต่อกระชับมิตรเรียบร้อยแล้ว!", ephemeral=True)
 
 
-bot.run(os.getenv("TOKEN"))
+if __name__ == "__main__":
+    keep_alive()  # รันเว็บเซิร์ฟเวอร์ Flask ควบคู่กันเพื่อให้ Render ตรวจพบพอร์ต
+    bot.run(os.getenv("TOKEN"))
