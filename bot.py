@@ -8,7 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-# สร้างเว็บเซิร์ฟเวอร์จำลองสำหรับเปิดพอร์ตเพื่อรันบน Render แบบฟรี
+# ==================== 🌐 0. ระบบตั้งค่าเว็บเซิร์ฟเวอร์สำหรับ Render ====================
 app = Flask('')
 
 @app.route('/')
@@ -31,18 +31,18 @@ intents.voice_states = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 ROLE_ID = 1535266021462511737         # ยศพันมิตรสำหรับสมาชิก
-ADMIN_ROLE_ID = 1535263803548110908   # ยศแอดมินหลังบ้าน
+ADMIN_ROLE_ID = 1535263803548110908   # ยศแอดมินหลังบ้าน (Super Admin)
 SCRIM_SCHEDULE_CHANNEL_ID = 1544949197520764972 # ไอดีห้องกำหนดการกระชับมิตร
 ROLE_GUILD_MEMBER = 1535265895524466839 # ไอดียศสมาชิกกิลด์หลัก
 
 def load_json(filename):
     if not os.path.exists(filename):
-        return {} if any(k in filename for k in ["warnings", "attendance", "scrim"]) else []
+        return {} if any(k in filename for k in ["warnings", "attendance", "scrim", "leadership"]) else []
     try:
         with open(filename, "r", encoding="utf-8") as f:
             return json.load(f)
     except json.JSONDecodeError:
-        return {} if any(k in filename for k in ["warnings", "attendance", "scrim"]) else []
+        return {} if any(k in filename for k in ["warnings", "attendance", "scrim", "leadership"]) else []
 
 def save_json(filename, data):
     with open(filename, "w", encoding="utf-8") as f:
@@ -60,7 +60,7 @@ def check_admin(interaction: discord.Interaction) -> bool:
         return False
 
 
-# --- 🪖 ระบบยืนยันกิลด์พันมิตร ---
+# ==================== 🪖 1. ระบบยืนยันกิลด์พันมิตร ====================
 class GuildModal(discord.ui.Modal, title="ยืนยันกิลด์พันมิตร ROV"):
     guild_input = discord.ui.TextInput(
         label="ชื่อกิลด์หรือชื่อย่อพันมิตร",
@@ -108,7 +108,16 @@ class GuildModal(discord.ui.Modal, title="ยืนยันกิลด์พ�
         else:
             await interaction.response.send_message("❌ ชื่อกิลด์หรือชื่อย่อไม่ถูกต้อง", ephemeral=True)
 
+class GuildView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
 
+    @discord.ui.button(label="🪖 ยืนยันกิลด์พันมิตร", style=discord.ButtonStyle.green, custom_id="verify_guild_btn")
+    async def verify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(GuildModal())
+
+
+# ==================== 🛠️ 2. ระบบจัดการกิลด์พันมิตร (แอดมิน) ====================
 class AddGuildModal(discord.ui.Modal, title="เพิ่มกิลด์พันมิตรใหม่"):
     guild_name = discord.ui.TextInput(label="ชื่อเต็มกิลด์", placeholder="เช่น DragonMind", required=True)
     guild_abbr = discord.ui.TextInput(label="ชื่อย่อกิลด์", placeholder="เช่น DM", required=True)
@@ -127,7 +136,6 @@ class AddGuildModal(discord.ui.Modal, title="เพิ่มกิลด์พ�
         save_json("guilds.json", guilds)
         await interaction.response.send_message(f"✅ เพิ่มกิลด์ **{name}** เรียบร้อยแล้ว!", ephemeral=True)
 
-
 class RemoveGuildModal(discord.ui.Modal, title="ลบกิลด์พันมิตร"):
     target_query = discord.ui.TextInput(label="ชื่อกิลด์หรือชื่อย่อที่ต้องการลบ", placeholder="พิมพ์ชื่อหรือชื่อย่อ...", required=True)
 
@@ -143,17 +151,38 @@ class RemoveGuildModal(discord.ui.Modal, title="ลบกิลด์พัน�
         save_json("guilds.json", updated_guilds)
         await interaction.response.send_message("🗑️ ลบกิลด์พันมิตรเรียบร้อยแล้ว", ephemeral=True)
 
-
-class GuildView(discord.ui.View):
+class AdminDashboardView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="🪖 ยืนยันกิลด์พันมิตร", style=discord.ButtonStyle.green, custom_id="verify_guild_btn")
-    async def verify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(GuildModal())
+    @discord.ui.button(label="➕ เพิ่มกิลด์", style=discord.ButtonStyle.blurple, custom_id="admin_add_guild")
+    async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not check_admin(interaction):
+            await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
+            return
+        await interaction.response.send_modal(AddGuildModal())
+
+    @discord.ui.button(label="📋 ดูรายชื่อกิลด์", style=discord.ButtonStyle.gray, custom_id="admin_list_guild")
+    async def list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not check_admin(interaction):
+            await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
+            return
+        guilds = load_json("guilds.json")
+        if not guilds:
+            await interaction.response.send_message("📂 ยังไม่มีรายชื่อกิลด์", ephemeral=True)
+            return
+        guild_list_str = "\n".join([f"- **{g['name']}** (`{g['abbr']}`)" for g in guilds])
+        await interaction.response.send_message(f"📋 **รายชื่อกิลด์:**\n{guild_list_str}", ephemeral=True)
+
+    @discord.ui.button(label="🗑️ ลบกิลด์", style=discord.ButtonStyle.red, custom_id="admin_remove_guild")
+    async def remove_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not check_admin(interaction):
+            await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
+            return
+        await interaction.response.send_modal(RemoveGuildModal())
 
 
-# --- 🛡️ ระบบจัดการรายชื่อและถอดยศสมาชิกลูกกิลด์ (แยกส่วนต่างหาก) ---
+# ==================== 🛡️ 3. ระบบจัดการรายชื่อและถอดยศสมาชิกลูกกิลด์ ====================
 class GuildManagementModal(discord.ui.Modal, title="🛠️ ระบบถอดยศสมาชิกกิลด์ด้วยเลขรหัส"):
     id_input = discord.ui.TextInput(
         label="กรอกเลขประจำตัวสมาชิก (เช่น 52, 93)",
@@ -188,7 +217,6 @@ class GuildManagementModal(discord.ui.Modal, title="🛠️ ระบบถอ�
         except Exception as e:
             await interaction.response.send_message(f"❌ เกิดข้อผิดพลาดในการถอดยศ: `{e}`", ephemeral=True)
 
-
 class GuildMemberDashboardView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -212,7 +240,6 @@ class GuildMemberDashboardView(discord.ui.View):
             display_name = member.display_name
             lower_name = display_name.lower()
             
-            # ซ่อน/ไม่แสดงผลตำแหน่งผู้บริหาร: หัวกิลด์, รองกิลด์, ที่ปรึกษา
             if "หัวกิลด์" in lower_name or "รองกิลด์" in lower_name or "ที่ปรึกษา" in lower_name:
                 continue
 
@@ -261,38 +288,143 @@ class GuildMemberDashboardView(discord.ui.View):
         await interaction.response.send_modal(GuildManagementModal())
 
 
-class AdminDashboardView(discord.ui.View):
+# ==================== 🏛️ 4. ระบบทำเนียบบริหาร (Leadership Roster) ====================
+class LeaderEditModal(discord.ui.Modal, title="🛠️ จัดการข้อมูลทำเนียบบริหาร"):
+    user_id_input = discord.ui.TextInput(
+        label="Discord User ID ของสมาชิก",
+        placeholder="เช่น 1496830449371185224",
+        required=True
+    )
+    role_type_input = discord.ui.TextInput(
+        label="ตำแหน่ง (พิมพ์: master, co, advisor, sub)",
+        placeholder="master = หัวกิลด์ | co = รองกิลด์ | advisor = ที่ปรึกษา | sub = แอดมินย่อย",
+        required=True,
+        max_length=10
+    )
+    duty_input = discord.ui.TextInput(
+        label="หน้าที่ความรับผิดชอบ",
+        placeholder="เช่น ดูแลภาพรวมกิลด์, จัดตารางวอร์, ดูแลสมาชิกลูกกิลด์",
+        style=discord.TextStyle.paragraph,
+        required=True
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        user_id = self.user_id_input.value.strip()
+        r_type = self.role_type_input.value.strip().lower()
+        duty = self.duty_input.value.strip()
+
+        type_mapping = {
+            "master": "guild_master",
+            "co": "co_leader",
+            "advisor": "advisor",
+            "sub": "sub_admin"
+        }
+
+        if r_type not in type_mapping:
+            await interaction.response.send_message("❌ ตำแหน่งไม่ถูกต้อง! กรุณากรอก master, co, advisor หรือ sub เท่านั้น", ephemeral=True)
+            return
+
+        key = type_mapping[r_type]
+        data = load_json("leadership.json")
+        if not data:
+            data = {"guild_master": [], "co_leader": [], "advisor": [], "sub_admin": []}
+
+        for k in data:
+            data[k] = [item for item in data[k] if item["user_id"] != user_id]
+
+        data[key].append({"user_id": user_id, "duty": duty})
+        save_json("leadership.json", data)
+
+        await interaction.response.send_message(f"✅ บันทึกข้อมูลทำเนียบเรียบร้อยแล้ว!", ephemeral=True)
+
+class LeaderRemoveModal(discord.ui.Modal, title="🗑️ ลบข้อมูลผู้บริหาร"):
+    user_id_input = discord.ui.TextInput(
+        label="Discord User ID ที่ต้องการลบ",
+        placeholder="เช่น 1496830449371185224",
+        required=True
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        user_id = self.user_id_input.value.strip()
+        data = load_json("leadership.json")
+        if not data:
+            await interaction.response.send_message("❌ ยังไม่มีข้อมูลในระบบทำเนียบ", ephemeral=True)
+            return
+
+        removed = False
+        for k in data:
+            before_len = len(data[k])
+            data[k] = [item for item in data[k] if item["user_id"] != user_id]
+            if len(data[k]) < before_len:
+                removed = True
+
+        if removed:
+            save_json("leadership.json", data)
+            await interaction.response.send_message(f"🗑️ ลบข้อมูล User ID: `{user_id}` ออกจากทำเนียบเรียบร้อยแล้ว", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ ไม่พบ User ID: `{user_id}` ในระบบทำเนียบ", ephemeral=True)
+
+def create_leadership_embed():
+    data = load_json("leadership.json")
+    if not data:
+        data = {"guild_master": [], "co_leader": [], "advisor": [], "sub_admin": []}
+
+    embed = discord.Embed(
+        title="🏛️ ทำเนียบผู้บริหารและทีมงานกิลด์",
+        description="โครงสร้างการปกครองและสายงานความรับผิดชอบภายในกิลด์",
+        color=discord.Color.gold()
+    )
+
+    def format_section(user_list):
+        if not user_list:
+            return "*(ยังไม่มีข้อมูล)*"
+        lines = []
+        for item in user_list:
+            uid = item["user_id"]
+            duty = item["duty"]
+            lines.append(f"• <@{uid}> — **หน้าที่:** {duty}")
+        return "\n".join(lines)
+
+    embed.add_field(name="👑 หัวกิลด์ (Guild Master)", value=format_section(data.get("guild_master", [])), inline=False)
+    embed.add_field(name="🛡️ รองกิลด์ (Co-Leader)", value=format_section(data.get("co_leader", [])), inline=False)
+    embed.add_field(name="💡 ที่ปรึกษา (Advisor)", value=format_section(data.get("advisor", [])), inline=False)
+    embed.add_field(name="⚔️ แอดมินและผู้ช่วยย่อย", value=format_section(data.get("sub_admin", [])), inline=False)
+
+    embed.set_footer(text="อัปเดตข้อมูลผ่านระบบหลังบ้าน Super Admin")
+    return embed
+
+class LeadershipView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="➕ เพิ่มกิลด์", style=discord.ButtonStyle.blurple, custom_id="admin_add_guild")
+    @discord.ui.button(label="🔄 รีเฟรชข้อมูล", style=discord.ButtonStyle.secondary, custom_id="refresh_leadership_board")
+    async def refresh_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        embed = create_leadership_embed()
+        await interaction.message.edit(embed=embed, view=self)
+
+class LeadershipAdminView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="➕ เพิ่ม/แก้ไขข้อมูล", style=discord.ButtonStyle.green, custom_id="admin_add_leader")
     async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not check_admin(interaction):
-            await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
+        has_permission = interaction.user.guild_permissions.administrator or any(role.id == ADMIN_ROLE_ID for role in interaction.user.roles)
+        if not has_permission:
+            await interaction.response.send_message("❌ เฉพาะผู้มียศ **Super Admin** เท่านั้นที่มีสิทธิ์จัดการข้อมูลนี้!", ephemeral=True)
             return
-        await interaction.response.send_modal(AddGuildModal())
+        await interaction.response.send_modal(LeaderEditModal())
 
-    @discord.ui.button(label="📋 ดูรายชื่อกิลด์", style=discord.ButtonStyle.gray, custom_id="admin_list_guild")
-    async def list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not check_admin(interaction):
-            await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
-            return
-        guilds = load_json("guilds.json")
-        if not guilds:
-            await interaction.response.send_message("📂 ยังไม่มีรายชื่อกิลด์", ephemeral=True)
-            return
-        guild_list_str = "\n".join([f"- **{g['name']}** (`{g['abbr']}`)" for g in guilds])
-        await interaction.response.send_message(f"📋 **รายชื่อกิลด์:**\n{guild_list_str}", ephemeral=True)
-
-    @discord.ui.button(label="🗑️ ลบกิลด์", style=discord.ButtonStyle.red, custom_id="admin_remove_guild")
+    @discord.ui.button(label="🗑️ ลบข้อมูล", style=discord.ButtonStyle.red, custom_id="admin_remove_leader")
     async def remove_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not check_admin(interaction):
-            await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
+        has_permission = interaction.user.guild_permissions.administrator or any(role.id == ADMIN_ROLE_ID for role in interaction.user.roles)
+        if not has_permission:
+            await interaction.response.send_message("❌ เฉพาะผู้มียศ **Super Admin** เท่านั้นที่มีสิทธิ์จัดการข้อมูลนี้!", ephemeral=True)
             return
-        await interaction.response.send_modal(RemoveGuildModal())
+        await interaction.response.send_modal(LeaderRemoveModal())
 
 
-# --- 🎙️ ระบบเช็คชื่อห้องเสียง ---
+# ==================== 🎙️ 5. ระบบเช็คชื่อห้องเสียง ====================
 class AttendanceView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -355,7 +487,7 @@ class AttendanceView(discord.ui.View):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-# --- 📊 กระดานสถิติพันมิตร ---
+# ==================== 📊 6. กระดานสถิติพันมิตร ====================
 def create_stats_embed(guild):
     guilds = load_json("guilds.json")
     stats = {g["abbr"].upper(): {"name": g["name"], "count": 0} for g in guilds}
@@ -375,7 +507,6 @@ def create_stats_embed(guild):
     embed.set_footer(text="กดปุ่มรีเฟรชด้านล่าง")
     return embed
 
-
 class StatsView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -387,7 +518,7 @@ class StatsView(discord.ui.View):
         await interaction.message.edit(embed=embed, view=self)
 
 
-# --- 🚨 บอร์ดประกาศรายชื่อผู้ทำผิดกฎ ---
+# ==================== 🚨 7. บอร์ดประกาศรายชื่อผู้ทำผิดกฎ ====================
 def create_warnings_embed():
     warnings = load_json("warnings.json")
     embed = discord.Embed(
@@ -437,7 +568,6 @@ def create_warnings_embed():
     embed.set_footer(text="กดปุ่ม '🔄 รีเฟรชข้อมูล' ด้านล่างเพื่ออัปเดตสถานะล่าสุด")
     return embed
 
-
 class WarningsBoardView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -449,7 +579,7 @@ class WarningsBoardView(discord.ui.View):
         await interaction.message.edit(embed=embed, view=self)
 
 
-# --- ⚔️ ระบบนัดกระชับมิตร (Scrim Negotiation System) ---
+# ==================== ⚔️ 8. ระบบนัดกระชับมิตร (Scrim Negotiation) ====================
 class ScheduleControlView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -474,7 +604,6 @@ class ScheduleControlView(discord.ui.View):
 
         await interaction.message.edit(embed=embed, view=self)
         await interaction.response.send_message(f"🗑️ แอดมิน {interaction.user.mention} ทำการยกเลิกการแข่งขันนี้เรียบร้อยแล้ว", ephemeral=True)
-
 
 class ScrimFormModal(discord.ui.Modal, title="กรอกฟอร์มนัดกระชับมิตร"):
     guild_fullname = discord.ui.TextInput(label="ชื่อเต็มกิลด์", placeholder="", required=True)
@@ -520,7 +649,6 @@ class ScrimFormModal(discord.ui.Modal, title="กรอกฟอร์มนั�
             view=ScrimControlView(),
             ephemeral=False
         )
-
 
 class ScrimControlView(discord.ui.View):
     def __init__(self):
@@ -640,7 +768,6 @@ class ScrimControlView(discord.ui.View):
                 except Exception:
                     await interaction.channel.edit(archived=True, locked=True)
 
-
 class ScrimSetupView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -674,7 +801,7 @@ class ScrimSetupView(discord.ui.View):
         await interaction.followup.send(f"✅ เปิดห้องเจรจานัดหมายส่วนตัวให้แล้วครับ: {thread.mention}", ephemeral=True)
 
 
-# --- ⚠️ ระบบคลิกขวาออกใบเตือน ---
+# ==================== ⚠️ 9. ระบบคลิกขวาออกใบเตือนสมาชิก ====================
 class WarnModal(discord.ui.Modal, title="ระบบออกใบเตือนสมาชิก"):
     def __init__(self, target_member: discord.Member):
         super().__init__()
@@ -739,7 +866,6 @@ class WarnModal(discord.ui.Modal, title="ระบบออกใบเตือ
             if not interaction.response.is_done():
                 await interaction.response.send_message(f"❌ เกิดข้อผิดพลาด: {e}", ephemeral=True)
 
-
 @bot.tree.context_menu(name="จัดการใบเตือน")
 async def warn_context_menu(interaction: discord.Interaction, member: discord.Member):
     try:
@@ -753,11 +879,14 @@ async def warn_context_menu(interaction: discord.Interaction, member: discord.Me
             await interaction.response.send_message(f"❌ เกิดข้อผิดพลาด: {e}", ephemeral=True)
 
 
+# ==================== 🚀 10. การลงทะเบียน Views และ Slash Commands ทั้งหมด ====================
 @bot.event
 async def on_ready():
     bot.add_view(GuildView())
     bot.add_view(AdminDashboardView())
     bot.add_view(GuildMemberDashboardView())
+    bot.add_view(LeadershipView())
+    bot.add_view(LeadershipAdminView())
     bot.add_view(AttendanceView())
     bot.add_view(StatsView())
     bot.add_view(WarningsBoardView())
@@ -772,35 +901,59 @@ async def on_ready():
     except Exception as e:
         print(f"Sync error: {e}")
 
-
+# คำสั่ง: ส่งปุ่มยืนยันกิลด์
 @bot.tree.command(name="setup", description="ส่งปุ่มยืนยันกิลด์")
 @app_commands.default_permissions(administrator=True)
 async def setup(interaction: discord.Interaction):
     await interaction.channel.send("📜 **ยืนยันตัวตนกิลด์พันมิตร**", view=GuildView())
     await interaction.response.send_message("สร้างปุ่มสมาชิกเรียบร้อย!", ephemeral=True)
 
-
+# คำสั่ง: แผงควบคุมจัดการกิลด์พันมิตร
 @bot.tree.command(name="admindash", description="แผงควบคุมจัดการกิลด์พันมิตร")
 @app_commands.default_permissions(administrator=True)
 async def admindash(interaction: discord.Interaction):
     await interaction.channel.send("🛠️ **แผงควบคุมแอดมิน (จัดการกิลด์พันมิตร)**", view=AdminDashboardView())
     await interaction.response.send_message("สร้างแดชบอร์ดกิลด์พันมิตรแล้ว!", ephemeral=True)
 
-
+# คำสั่ง: แผงจัดการสมาชิกลูกกิลด์
 @bot.tree.command(name="guildmember", description="แผงจัดการสมาชิกลูกกิลด์ (เช็กลิสต์และถอดยศ)")
 @app_commands.default_permissions(administrator=True)
 async def guildmember(interaction: discord.Interaction):
     await interaction.channel.send("🛡️ **แผงจัดการสมาชิกลูกกิลด์**", view=GuildMemberDashboardView())
     await interaction.response.send_message("สร้างแผงจัดการสมาชิกลูกกิลด์แล้ว!", ephemeral=True)
 
+# คำสั่ง: ส่งบอร์ดทำเนียบบริหาร (หน้าบ้าน)
+@bot.tree.command(name="setup-leadership", description="[Admin] ส่งบอร์ดทำเนียบบริหารประจำกิลด์")
+@app_commands.default_permissions(administrator=True)
+async def setup_leadership(interaction: discord.Interaction):
+    embed = create_leadership_embed()
+    await interaction.channel.send(embed=embed, view=LeadershipView())
+    await interaction.response.send_message("สร้างบอร์ดทำเนียบบริหารเรียบร้อย!", ephemeral=True)
 
+# คำสั่ง: แผงหลังบ้านจัดการทำเนียบ (จำกัดสิทธิ์เฉพาะ Super Admin ID: 1535263803548110908)
+@bot.tree.command(name="admin-leadership", description="[Super Admin] แผงปุ่มหลังบ้านจัดการทำเนียบบริหาร")
+async def admin_leadership(interaction: discord.Interaction):
+    has_permission = interaction.user.guild_permissions.administrator or any(role.id == ADMIN_ROLE_ID for role in interaction.user.roles)
+    if not has_permission:
+        await interaction.response.send_message("❌ คำสั่งนี้สำหรับผู้มียศ **Super Admin** เท่านั้น", ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title="🛠️ แผงควบคุมหลังบ้าน: ทำเนียบบริหาร",
+        description="กดปุ่มด้านล่างเพื่อ เพิ่ม แก้ไข หรือลบข้อมูลผู้บริหารและหน้าที่ความรับผิดชอบ",
+        color=discord.Color.dark_theme()
+    )
+    await interaction.channel.send(embed=embed, view=LeadershipAdminView())
+    await interaction.response.send_message("สร้างแผงหลังบ้านจัดการทำเนียบแล้ว!", ephemeral=True)
+
+# คำสั่ง: เช็คชื่อประชุมห้องเสียง
 @bot.tree.command(name="attendance", description="แผงเช็คชื่อประชุมห้องเสียงสำหรับแอดมิน")
 @app_commands.default_permissions(administrator=True)
 async def attendance(interaction: discord.Interaction):
     await interaction.channel.send("🎙️ **ระบบเช็คชื่อประชุมห้องเสียง**", view=AttendanceView())
     await interaction.response.send_message("สร้างแผงเช็คชื่อแล้ว!", ephemeral=True)
 
-
+# คำสั่ง: กระดานสถิติพันมิตร
 @bot.tree.command(name="statsboard", description="กระดานสถิติพันมิตร")
 @app_commands.default_permissions(administrator=True)
 async def statsboard(interaction: discord.Interaction):
@@ -808,7 +961,7 @@ async def statsboard(interaction: discord.Interaction):
     await interaction.channel.send(embed=embed, view=StatsView())
     await interaction.response.send_message("สร้างกระดานสถิติแล้ว!", ephemeral=True)
 
-
+# คำสั่ง: บอร์ดใบเตือนสาธารณะ
 @bot.tree.command(name="warningsboard", description="สร้างกระดานบอร์ดใบเหลือง-ใบแดงสาธารณะสำหรับทุกคน")
 @app_commands.default_permissions(administrator=True)
 async def warningsboard(interaction: discord.Interaction):
@@ -816,7 +969,7 @@ async def warningsboard(interaction: discord.Interaction):
     await interaction.channel.send(embed=embed, view=WarningsBoardView())
     await interaction.response.send_message("สร้างบอร์ดใบเตือนสาธารณะเรียบร้อยแล้ว!", ephemeral=True)
 
-
+# คำสั่ง: ระบบติดต่อกระชับมิตร
 @bot.tree.command(name="scrimsetup", description="ส่งปุ่มติดต่อกระชับมิตร")
 @app_commands.default_permissions(administrator=True)
 async def scrimsetup(interaction: discord.Interaction):
@@ -830,5 +983,5 @@ async def scrimsetup(interaction: discord.Interaction):
 
 
 if __name__ == "__main__":
-    keep_alive()  # รันเว็บเซิร์ฟเวอร์ Flask ควบคู่กันเพื่อให้ Render ตรวจพบพอร์ต
+    keep_alive()
     bot.run(os.getenv("TOKEN"))
