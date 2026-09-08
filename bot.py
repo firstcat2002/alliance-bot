@@ -394,11 +394,36 @@ class LeaderAddMemberSelect(discord.ui.UserSelect):
 
     async def callback(self, interaction: discord.Interaction):
         selected_user = self.values[0]
+        member_name = selected_user.display_name if hasattr(selected_user, "display_name") else str(selected_user)
         
-        class QuickAddModal(discord.ui.Modal, title="🛠️ ระบุตำแหน่งและหน้าที่"):
-            role_type_input = discord.ui.TextInput(label="หมวดหมู่ตำแหน่งหลัก", placeholder="เช่น หัวกิลด์, รองกิลด์, ที่ปรึกษา", required=True, max_length=30)
-            custom_title_input = discord.ui.TextInput(label="ชื่อตำแหน่งที่ต้องการแสดง", placeholder="เช่น หัวหน้าหน่วยจู่โจม", required=True, max_length=50)
-            duty_input = discord.ui.TextInput(label="หน้าที่ความรับผิดชอบ", placeholder="เช่น ดูแลภาพรวมกิลด์", style=discord.TextStyle.paragraph, required=True)
+        class QuickAddModal(discord.ui.Modal):
+            def __init__(self):
+                super().__init__(title=f"🛠️ เพิ่ม: {member_name}")
+
+            target_display = discord.ui.TextInput(
+                label="สมาชิกที่เลือก",
+                default=f"{member_name} (ID: {selected_user.id})",
+                required=False,
+                disabled=True
+            )
+            role_type_input = discord.ui.TextInput(
+                label="หมวดหมู่ตำแหน่งหลัก",
+                placeholder="เช่น หัวกิลด์, รองกิลด์, ที่ปรึกษา",
+                required=True,
+                max_length=30
+            )
+            custom_title_input = discord.ui.TextInput(
+                label="ชื่อตำแหน่งที่ต้องการแสดง",
+                placeholder="เช่น หัวหน้าหน่วยจู่โจม",
+                required=True,
+                max_length=50
+            )
+            duty_input = discord.ui.TextInput(
+                label="หน้าที่ความรับผิดชอบ",
+                placeholder="เช่น ดูแลภาพรวมกิลด์",
+                style=discord.TextStyle.paragraph,
+                required=True
+            )
 
             async def on_submit(self, modal_interaction: discord.Interaction):
                 cat = self.role_type_input.value.strip()
