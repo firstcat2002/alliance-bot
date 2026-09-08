@@ -153,7 +153,7 @@ class GuildView(discord.ui.View):
         await interaction.response.send_modal(GuildModal())
 
 
-# --- 🛡️ ระบบจัดการรายชื่อและถอดยศกิลด์ผ่านยศ ---
+# --- 🛡️ ระบบจัดการรายชื่อและถอดยศสมาชิกลูกกิลด์ (แยกส่วนต่างหาก) ---
 class GuildManagementModal(discord.ui.Modal, title="🛠️ ระบบถอดยศสมาชิกกิลด์ด้วยเลขรหัส"):
     id_input = discord.ui.TextInput(
         label="กรอกเลขประจำตัวสมาชิก (เช่น 52, 93)",
@@ -189,37 +189,11 @@ class GuildManagementModal(discord.ui.Modal, title="🛠️ ระบบถอ�
             await interaction.response.send_message(f"❌ เกิดข้อผิดพลาดในการถอดยศ: `{e}`", ephemeral=True)
 
 
-class AdminDashboardView(discord.ui.View):
+class GuildMemberDashboardView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="➕ เพิ่มกิลด์", style=discord.ButtonStyle.blurple, custom_id="admin_add_guild", row=0)
-    async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not check_admin(interaction):
-            await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
-            return
-        await interaction.response.send_modal(AddGuildModal())
-
-    @discord.ui.button(label="📋 ดูรายชื่อกิลด์", style=discord.ButtonStyle.gray, custom_id="admin_list_guild", row=0)
-    async def list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not check_admin(interaction):
-            await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
-            return
-        guilds = load_json("guilds.json")
-        if not guilds:
-            await interaction.response.send_message("📂 ยังไม่มีรายชื่อกิลด์", ephemeral=True)
-            return
-        guild_list_str = "\n".join([f"- **{g['name']}** (`{g['abbr']}`)" for g in guilds])
-        await interaction.response.send_message(f"📋 **รายชื่อกิลด์:**\n{guild_list_str}", ephemeral=True)
-
-    @discord.ui.button(label="🗑️ ลบกิลด์", style=discord.ButtonStyle.red, custom_id="admin_remove_guild", row=0)
-    async def remove_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not check_admin(interaction):
-            await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
-            return
-        await interaction.response.send_modal(RemoveGuildModal())
-
-    @discord.ui.button(label="📋 เช็กลิสต์สมาชิกลูกกิลด์", style=discord.ButtonStyle.primary, custom_id="admin_guild_roster", row=1)
+    @discord.ui.button(label="📋 เช็กลิสต์สมาชิกลูกกิลด์", style=discord.ButtonStyle.primary, custom_id="admin_guild_roster")
     async def roster_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not check_admin(interaction):
             await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
@@ -232,15 +206,27 @@ class AdminDashboardView(discord.ui.View):
             return
 
         members_data = []
-        pattern = re.compile(r"\((\d+)\)")
+        pattern_bracket = re.compile(r"\((\d+)\)")
 
         for member in guild_role.members:
-            match = pattern.search(member.display_name)
+            display_name = member.display_name
+            lower_name = display_name.lower()
+            
+            # ซ่อน/ไม่แสดงผลตำแหน่งผู้บริหาร: หัวกิลด์, รองกิลด์, ที่ปรึกษา
+            if "หัวกิลด์" in lower_name or "รองกิลด์" in lower_name or "ที่ปรึกษา" in lower_name:
+                continue
+
+            match = pattern_bracket.search(display_name)
             if match:
                 code_num = int(match.group(1))
                 members_data.append((code_num, member))
             else:
-                members_data.append((99999, member))
+                numbers_found = re.findall(r"\d+", display_name)
+                if numbers_found:
+                    code_num = int(numbers_found[-1])
+                    members_data.append((code_num, member))
+                else:
+                    members_data.append((99999, member))
 
         members_data.sort(key=lambda x: x[0])
 
@@ -255,24 +241,55 @@ class AdminDashboardView(discord.ui.View):
             else:
                 roster_list.append(f"• **({code})** {member.mention} — `{member.display_name}`")
 
-        description_text = f"📊 **ยอดสมาชิกลูกกิลด์ทั้งหมด:** **{len(members_data)}** คน\n\n" + "\n".join(roster_list)
+        description_text = f"📊 **ยอดสมาชิกลูกกิลด์ทั้งหมด (ไม่รวมผู้บริหาร):** **{len(members_data)}** คน\n\n" + "\n".join(roster_list)
         if len(description_text) > 4000:
             description_text = description_text[:3950] + "\n\n*(รายชื่อยาวเกินไป แสดงผลบางส่วน)*"
 
         embed = discord.Embed(
-            title="🛡️ รายชื่อสมาชิกลูกกิลด์ทั้งหมด (จากยศ)",
+            title="🛡️ รายชื่อสมาชิกลูกกิลด์ทั้งหมด",
             description=description_text,
             color=discord.Color.blue()
         )
         embed.set_footer(text="ระบบจัดการกิลด์")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="❌ ถอดยศด้วยเลขรหัส", style=discord.ButtonStyle.danger, custom_id="admin_guild_unassign", row=1)
+    @discord.ui.button(label="❌ ถอดยศด้วยเลขรหัส", style=discord.ButtonStyle.danger, custom_id="admin_guild_unassign")
     async def unassign_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not check_admin(interaction):
             await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
             return
         await interaction.response.send_modal(GuildManagementModal())
+
+
+class AdminDashboardView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="➕ เพิ่มกิลด์", style=discord.ButtonStyle.blurple, custom_id="admin_add_guild")
+    async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not check_admin(interaction):
+            await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
+            return
+        await interaction.response.send_modal(AddGuildModal())
+
+    @discord.ui.button(label="📋 ดูรายชื่อกิลด์", style=discord.ButtonStyle.gray, custom_id="admin_list_guild")
+    async def list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not check_admin(interaction):
+            await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
+            return
+        guilds = load_json("guilds.json")
+        if not guilds:
+            await interaction.response.send_message("📂 ยังไม่มีรายชื่อกิลด์", ephemeral=True)
+            return
+        guild_list_str = "\n".join([f"- **{g['name']}** (`{g['abbr']}`)" for g in guilds])
+        await interaction.response.send_message(f"📋 **รายชื่อกิลด์:**\n{guild_list_str}", ephemeral=True)
+
+    @discord.ui.button(label="🗑️ ลบกิลด์", style=discord.ButtonStyle.red, custom_id="admin_remove_guild")
+    async def remove_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not check_admin(interaction):
+            await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
+            return
+        await interaction.response.send_modal(RemoveGuildModal())
 
 
 # --- 🎙️ ระบบเช็คชื่อห้องเสียง ---
@@ -740,6 +757,7 @@ async def warn_context_menu(interaction: discord.Interaction, member: discord.Me
 async def on_ready():
     bot.add_view(GuildView())
     bot.add_view(AdminDashboardView())
+    bot.add_view(GuildMemberDashboardView())
     bot.add_view(AttendanceView())
     bot.add_view(StatsView())
     bot.add_view(WarningsBoardView())
@@ -762,11 +780,18 @@ async def setup(interaction: discord.Interaction):
     await interaction.response.send_message("สร้างปุ่มสมาชิกเรียบร้อย!", ephemeral=True)
 
 
-@bot.tree.command(name="admindash", description="แผงควบคุมจัดการกิลด์")
+@bot.tree.command(name="admindash", description="แผงควบคุมจัดการกิลด์พันมิตร")
 @app_commands.default_permissions(administrator=True)
 async def admindash(interaction: discord.Interaction):
-    await interaction.channel.send("🛠️ **แผงควบคุมแอดมิน (จัดการกิลด์)**", view=AdminDashboardView())
-    await interaction.response.send_message("สร้างแดชบอร์ดกิลด์แล้ว!", ephemeral=True)
+    await interaction.channel.send("🛠️ **แผงควบคุมแอดมิน (จัดการกิลด์พันมิตร)**", view=AdminDashboardView())
+    await interaction.response.send_message("สร้างแดชบอร์ดกิลด์พันมิตรแล้ว!", ephemeral=True)
+
+
+@bot.tree.command(name="guildmember", description="แผงจัดการสมาชิกลูกกิลด์ (เช็กลิสต์และถอดยศ)")
+@app_commands.default_permissions(administrator=True)
+async def guildmember(interaction: discord.Interaction):
+    await interaction.channel.send("🛡️ **แผงจัดการสมาชิกลูกกิลด์**", view=GuildMemberDashboardView())
+    await interaction.response.send_message("สร้างแผงจัดการสมาชิกลูกกิลด์แล้ว!", ephemeral=True)
 
 
 @bot.tree.command(name="attendance", description="แผงเช็คชื่อประชุมห้องเสียงสำหรับแอดมิน")
@@ -801,7 +826,7 @@ async def scrimsetup(interaction: discord.Interaction):
         color=discord.Color.blue()
     )
     await interaction.channel.send(embed=embed, view=ScrimSetupView())
-    await interaction.response.send_message("สร้างปุ่มติดต่อกระชับมิตรเรียบร้อยแล้ว!", ephemeral=True)
+    await interaction.response.send_message("ส่งปุ่มติดต่อกระชับมิตรเรียบร้อยแล้ว!", ephemeral=True)
 
 
 if __name__ == "__main__":
