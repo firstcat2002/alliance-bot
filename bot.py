@@ -35,18 +35,81 @@ ADMIN_ROLE_ID = 1535263803548110908    # ยศแอดมินหลังบ
 SCRIM_SCHEDULE_CHANNEL_ID = 1544949197520764972 # ไอดีห้องกำหนดการกระชับมิตร
 ROLE_GUILD_MEMBER = 1535265895524466839 # ไอดียศสมาชิกกิลด์หลัก
 
+# รายชื่อไฟล์ JSON ทั้งหมดที่ต้องใช้ระบบสำรองข้อมูล
+TRACKED_FILES = [
+    "guilds.json", 
+    "alliance.json", 
+    "leadership.json", 
+    "attendance_logs.json", 
+    "warnings.json", 
+    "scrim_sessions.json"
+]
+
 def load_json(filename):
     if not os.path.exists(filename):
-        return {} if any(k in filename for k in ["warnings", "attendance", "scrim", "leadership", "alliance"]) else []
+        return {} if any(k in filename for k in ["warnings", "attendance", "scrim", "leadership", "alliance", "config"]) else []
     try:
         with open(filename, "r", encoding="utf-8") as f:
             return json.load(f)
     except json.JSONDecodeError:
-        return {} if any(k in filename for k in ["warnings", "attendance", "scrim", "leadership", "alliance"]) else []
+        return {} if any(k in filename for k in ["warnings", "attendance", "scrim", "leadership", "alliance", "config"]) else []
 
 def save_json(filename, data):
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
+
+# ==================== 📦 ระบบจัดการ Backup อัตโนมัติผ่าน Discord ====================
+async def get_valid_backup_channel():
+    """ค้นหาและตรวจสอบห้องเก็บ Backup ป้องกันกรณีห้องถูกลบ"""
+    config = load_json("config.json")
+    if not isinstance(config, dict):
+        config = {}
+    
+    channel_id = config.get("backup_channel_id")
+    channel = None
+    
+    if channel_id:
+        channel = bot.get_channel(channel_id)
+        
+    # ถ้าหาห้องเดิมไม่เจอ (อาจถูกลบ) ให้ลองหาห้องสำรองชื่อ "bot-backup" ในเซิร์ฟเวอร์อัตโนมัติ
+    if not channel:
+        for guild in bot.guilds:
+            channel = discord.utils.get(guild.text_channels, name="bot-backup")
+            if channel:
+                config["backup_channel_id"] = channel.id
+                save_json("config.json", config)
+                break
+                
+    return channel
+
+async def restore_json_from_discord():
+    """ดึงไฟล์ JSON ล่าสุดจากห้อง Discord มาไว้ในเครื่องตอนเปิดบอต (ป้องกันข้อมูลหายตอนอัปเดตโค้ด)"""
+    channel = await get_valid_backup_channel()
+    if not channel:
+        print("⚠️ ยังไม่ได้ตั้งค่าห้อง Backup หรือไม่พบห้อง 'bot-backup'")
+        return
+
+    print("🔄 กำลังตรวจสอบและกู้คืนข้อมูล Backup จาก Discord...")
+    async for message in channel.history(limit=100):
+        if message.author == bot.user and message.attachments:
+            for attachment in message.attachments:
+                if attachment.filename in TRACKED_FILES:
+                    if not os.path.exists(attachment.filename):
+                        await attachment.save(attachment.filename)
+                        print(f"📥 กู้คืนไฟล์ {attachment.filename} สำเร็จ!")
+                        
+    print("✅ โหลดข้อมูล Backup เสร็จสิ้น พร้อมใช้งาน!")
+
+async def save_and_backup_json(filename, data):
+    """บันทึกลงเครื่อง และอัปโหลดไฟล์สำรองขึ้น Discord ทันทีที่มีการเปลี่ยนแปลงข้อมูล"""
+    save_json(filename, data)
+    
+    channel = await get_valid_backup_channel()
+    if channel:
+        try:
+            await channel.send(content=f"📦 Auto-Backup: `{filename}`", file=discord.File(filename))
+        except Exception as e:
+            print(f"⚠️ สำรองไฟล์ {filename} ขึ้น Discord ไม่สำเร็จ: {e}")
 
 def check_admin(interaction: discord.Interaction) -> bool:
     try:
@@ -60,7 +123,7 @@ def check_admin(interaction: discord.Interaction) -> bool:
         return False
 
 
-# ==================== 🪖 1. ระบบยืนยันกิลด์พันมิตร (คงระบบตรวจสอบย่อเดิม + เพิ่มช่องตำแหน่ง) ====================
+# ==================== 🪖 1. ระบบยืนยันกิลด์พันมิตร ====================
 class GuildModal(discord.ui.Modal, title="ยืนยันกิลด์พันมิตร ROV"):
     guild_input = discord.ui.TextInput(
         label="ชื่อกิลด์หรือชื่อย่อพันมิตร",
@@ -101,7 +164,6 @@ class GuildModal(discord.ui.Modal, title="ยืนยันกิลด์พ�
             full_name = matched_guild["name"]
             new_nickname = f"[{abbr}] {suffix}"
 
-            # บันทึกข้อมูลตำแหน่งเก็บไว้ใน alliance.json
             alliance_data = load_json("alliance.json")
             if not isinstance(alliance_data, dict):
                 alliance_data = {}
@@ -114,7 +176,7 @@ class GuildModal(discord.ui.Modal, title="ยืนยันกิลด์พ�
                 "nickname": suffix,
                 "position": position
             }
-            save_json("alliance.json", alliance_data)
+            await save_and_backup_json("alliance.json", alliance_data)
 
             try:
                 await interaction.user.edit(nick=new_nickname)
@@ -155,7 +217,7 @@ class AddGuildModal(discord.ui.Modal, title="เพิ่มกิลด์พ�
                 return
 
         guilds.append({"name": name, "abbr": abbr})
-        save_json("guilds.json", guilds)
+        await save_and_backup_json("guilds.json", guilds)
         await interaction.response.send_message(f"✅ เพิ่มกิลด์ **{name}** เรียบร้อยแล้ว!", ephemeral=True)
 
 class RemoveGuildModal(discord.ui.Modal, title="ลบกิลด์พันมิตร"):
@@ -170,7 +232,7 @@ class RemoveGuildModal(discord.ui.Modal, title="ลบกิลด์พัน�
             await interaction.response.send_message("❌ ไม่พบกิลด์ที่ต้องการลบ", ephemeral=True)
             return
 
-        save_json("guilds.json", updated_guilds)
+        await save_and_backup_json("guilds.json", updated_guilds)
         await interaction.response.send_message("🗑️ ลบกิลด์พันมิตรเรียบร้อยแล้ว", ephemeral=True)
 
 class AdminDashboardView(discord.ui.View):
@@ -374,7 +436,7 @@ class LeaderAddModal(discord.ui.Modal, title="🛠️ เพิ่มข้อ�
             "title": custom_title,
             "duty": duty
         })
-        save_json("leadership.json", data)
+        await save_and_backup_json("leadership.json", data)
         await interaction.response.send_message(f"✅ เพิ่ม {target_member.mention} เข้าทำเนียบในตำแหน่ง **{custom_title}** เรียบร้อยแล้ว!", ephemeral=True)
 
 class LeaderEditModal(discord.ui.Modal):
@@ -418,7 +480,7 @@ class LeaderEditModal(discord.ui.Modal):
             "title": custom_title,
             "duty": duty
         })
-        save_json("leadership.json", data)
+        await save_and_backup_json("leadership.json", data)
         await interaction.response.send_message(f"✅ อัปเดตข้อมูลเรียบร้อยแล้ว!", ephemeral=True)
 
 class LeaderSelectDropdown(discord.ui.Select):
@@ -499,7 +561,7 @@ class LeaderRemoveSelect(discord.ui.Select):
                 removed = True
 
         if removed:
-            save_json("leadership.json", data)
+            await save_and_backup_json("leadership.json", data)
             await interaction.response.send_message(f"🗑️ ลบ User ID: `{uid}` ออกจากทำเนียบเรียบร้อยแล้ว!", ephemeral=True)
         else:
             await interaction.response.send_message(f"❌ ไม่พบข้อมูลดังกล่าว", ephemeral=True)
@@ -637,7 +699,7 @@ class AttendanceView(discord.ui.View):
             "total": len(members),
             "members": members
         }
-        save_json("attendance_logs.json", logs)
+        await save_and_backup_json("attendance_logs.json", logs)
 
         member_list_str = "\n".join([f"{i+1}. {name}" for i, name in enumerate(members)])
         embed = discord.Embed(
@@ -670,13 +732,12 @@ class AttendanceView(discord.ui.View):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-# ==================== 📊 6. กระดานสถิติพันมิตร (เวอร์ชันอัปเดตเช็กยศจริงแบบเรียลไทม์) ====================
+# ==================== 📊 6. กระดานสถิติพันมิตร ====================
 def create_stats_embed(guild):
     guilds = load_json("guilds.json")
     alliance_data = load_json("alliance.json")
     alliance_members = alliance_data.get("members", {}) if isinstance(alliance_data, dict) else {}
 
-    # รวบรวมข้อมูลโครงสร้างกิลด์
     stats = {}
     for g in guilds:
         abbr = g["abbr"].upper()
@@ -694,7 +755,6 @@ def create_stats_embed(guild):
             uid_str = str(member.id)
             display_name = member.display_name.upper()
             
-            # ค้นหาว่าชื่อเล่นหรือชื่อในดิสตรงกับกิลด์ย่อไหน
             matched_abbr = None
             for abbr in stats.keys():
                 if display_name.startswith(f"[{abbr}]"):
@@ -702,7 +762,6 @@ def create_stats_embed(guild):
                     break
 
             if matched_abbr:
-                # ดึงข้อมูลตำแหน่งที่เคยกรอกไว้ในฟอร์ม (ถ้ามี) ถ้าไม่มีให้ใช้ค่าเริ่มต้น "สมาชิก"
                 user_info = alliance_members.get(uid_str, {})
                 nickname = user_info.get("nickname", member.display_name)
                 position = user_info.get("position", "สมาชิก")
@@ -806,7 +865,7 @@ class WarningsBoardView(discord.ui.View):
         await interaction.message.edit(embed=embed, view=self)
 
 
-# ==================== ⚔️ 8. ระบบนัดกระชับมิตร (Scrim Negotiation) ====================
+# ==================== ⚔️ 8. ระบบนัดกระชับมิตร ====================
 class ScheduleControlView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -855,7 +914,7 @@ class ScrimFormModal(discord.ui.Modal, title="กรอกฟอร์มนั�
             "host_confirmed": False,
             "guest_confirmed": False
         }
-        save_json("scrim_sessions.json", scrim_data)
+        await save_and_backup_json("scrim_sessions.json", scrim_data)
 
         embed = discord.Embed(
             title="💖 กระชับมิตร 💖",
@@ -896,7 +955,7 @@ class ScrimControlView(discord.ui.View):
             return
 
         scrim_data[thread_id]["host_confirmed"] = True
-        save_json("scrim_sessions.json", scrim_data)
+        await save_and_backup_json("scrim_sessions.json", scrim_data)
         
         await self.update_embed_status(interaction, scrim_data[thread_id])
         await interaction.response.send_message("✅ บันทึกการยืนยันฝั่งเราเรียบร้อย", ephemeral=True)
@@ -911,7 +970,7 @@ class ScrimControlView(discord.ui.View):
             return
 
         scrim_data[thread_id]["guest_confirmed"] = True
-        save_json("scrim_sessions.json", scrim_data)
+        await save_and_backup_json("scrim_sessions.json", scrim_data)
         
         await self.update_embed_status(interaction, scrim_data[thread_id])
         await interaction.response.send_message("✅ บันทึกการยืนยันฝั่งคู่กรณีเรียบร้อย", ephemeral=True)
@@ -933,7 +992,7 @@ class ScrimControlView(discord.ui.View):
 
         if thread_id in scrim_data:
             del scrim_data[thread_id]
-            save_json("scrim_sessions.json", scrim_data)
+            await save_and_backup_json("scrim_sessions.json", scrim_data)
 
         await interaction.response.send_message("🗑️ ทำการยกเลิกการเจรจาและกำลังลบห้องเธรดนี้...", ephemeral=True)
         
@@ -991,7 +1050,7 @@ class ScrimControlView(discord.ui.View):
 
             if thread_id in scrim_data:
                 del scrim_data[thread_id]
-                save_json("scrim_sessions.json", scrim_data)
+                await save_and_backup_json("scrim_sessions.json", scrim_data)
 
             if isinstance(interaction.channel, discord.Thread):
                 try:
@@ -1011,17 +1070,14 @@ class ScrimSetupView(discord.ui.View):
 
         await interaction.response.defer(ephemeral=True)
 
-        # 1. สร้างเธรดแบบ Private ตามเดิมเพื่อให้มีความเป็นส่วนตัว
         thread = await interaction.channel.create_thread(
             name=f"scrim-{interaction.user.name}",
             type=discord.ChannelType.private_thread,
             auto_archive_duration=1440
         )
         
-        # 2. เพิ่มตัวผู้กดปุ่ม (ลูกค้า) เข้าเธรด
         await thread.add_user(interaction.user)
 
-        # 3. ค้นหาและดึงทุกคนที่มียศแอดมิน (ADMIN_ROLE_ID) เข้ามาในเธรดนี้ด้วยอัตโนมัติ
         for member in interaction.guild.members:
             if any(role.id == ADMIN_ROLE_ID for role in member.roles):
                 try:
@@ -1103,7 +1159,7 @@ class WarnModal(discord.ui.Modal, title="ระบบออกใบเตือ
                 except Exception:
                     embed.add_field(name="สถานะการแบน", value="⚠️ บอทไม่สามารถแบนได้ (โปรดแบนด้วยมือ)", inline=False)
 
-            save_json("warnings.json", warnings)
+            await save_and_backup_json("warnings.json", warnings)
             await interaction.response.send_message(embed=embed)
         except Exception as e:
             print(f"Error in WarnModal on_submit: {e}")
@@ -1123,9 +1179,25 @@ async def warn_context_menu(interaction: discord.Interaction, member: discord.Me
             await interaction.response.send_message(f"❌ เกิดข้อผิดพลาด: {e}", ephemeral=True)
 
 
-# ==================== 🚀 10. การลงทะเบียน Views และ Slash Commands ทั้งหมด ====================
+# ==================== 🚀 10. คำสั่งตั้งค่า Backup และคำสั่งทั่วไป ====================
+@bot.tree.command(name="set-backup", description="[Admin] ตั้งค่าห้องนี้เป็นจุดเก็บ Backup ข้อมูลของบอตอัตโนมัติ")
+@app_commands.default_permissions(administrator=True)
+async def set_backup(interaction: discord.Interaction):
+    config = load_json("config.json")
+    if not isinstance(config, dict):
+        config = {}
+    
+    config["backup_channel_id"] = interaction.channel.id
+    save_json("config.json", config)
+    
+    await interaction.response.send_message(f"✅ ตั้งค่าห้อง {interaction.channel.mention} เป็นห้องเก็บ Auto-Backup สำเร็จ! ข้อมูลจะไม่หายเวลาอัปเดตโค้ด", ephemeral=True)
+
 @bot.event
 async def on_ready():
+    # 1. โหลดข้อมูล Backup กลับมาก่อนเริ่มระบบ
+    await restore_json_from_discord()
+
+    # 2. Add Views ทั้งหมด
     bot.add_view(GuildView())
     bot.add_view(AdminDashboardView())
     bot.add_view(GuildMemberDashboardView())
