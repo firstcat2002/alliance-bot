@@ -289,55 +289,40 @@ class GuildMemberDashboardView(discord.ui.View):
 
 
 # ==================== 🏛️ 4. ระบบทำเนียบบริหาร (Leadership Roster) ====================
-# ==================== 🏛️ 4. ระบบทำเนียบบริหาร (Leadership Roster) ====================
-class LeaderAddModal(discord.ui.Modal, title="🛠️ เพิ่มข้อมูลผู้บริหาร"):
-    user_input = discord.ui.TextInput(
-        label="ชื่อสมาชิก หรือ Discord User ID",
-        placeholder="พิมพ์ชื่อ, เมนชั่น (@Name) หรือใส่ User ID",
-        required=True
-    )
-    custom_title_input = discord.ui.TextInput(
-        label="📌 ชื่อตำแหน่งที่ต้องการแสดง",
-        placeholder="เช่น หัวกิลด์, รองกิลด์, ที่ปรึกษา, หัวหน้าหน่วย",
-        required=True,
-        max_length=50
-    )
-    duty_input = discord.ui.TextInput(
-        label="📝 หน้าที่ความรับผิดชอบ",
-        placeholder="เช่น ดูแลภาพรวมกิลด์, จัดตารางวอร์",
-        style=discord.TextStyle.paragraph,
-        required=True
-    )
+class LeaderAddModal(discord.ui.Modal):
+    def __init__(self, selected_user: discord.abc.User):
+        member_name = selected_user.display_name if hasattr(selected_user, "display_name") else str(selected_user)
+        super().__init__(title=f"🛠️ เพิ่มข้อมูล: {member_name}")
+        self.target_user = selected_user
+
+        self.target_display = discord.ui.TextInput(
+            label="👤 ชื่อสมาชิกที่เลือก",
+            default=member_name,
+            required=False,
+            disabled=True
+        )
+        self.custom_title_input = discord.ui.TextInput(
+            label="📌 ชื่อตำแหน่งที่ต้องการแสดง",
+            placeholder="เช่น หัวกิลด์, รองกิลด์, ที่ปรึกษา, หัวหน้าหน่วย",
+            required=True,
+            max_length=50
+        )
+        self.duty_input = discord.ui.TextInput(
+            label="📝 หน้าที่ความรับผิดชอบ",
+            placeholder="เช่น ดูแลภาพรวมกิลด์, จัดตารางวอร์",
+            style=discord.TextStyle.paragraph,
+            required=True
+        )
+
+        self.add_item(self.target_display)
+        self.add_item(self.custom_title_input)
+        self.add_item(self.duty_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        raw_text = self.user_input.value.strip()
         custom_title = self.custom_title_input.value.strip()
         duty = self.duty_input.value.strip()
+        user_id_str = str(self.target_user.id)
 
-        target_member = None
-
-        id_match = re.search(r"\d+", raw_text)
-        if id_match:
-            uid = int(id_match.group(0))
-            target_member = interaction.guild.get_member(uid)
-            if not target_member:
-                try:
-                    target_member = await interaction.guild.fetch_member(uid)
-                except Exception:
-                    pass
-
-        if not target_member:
-            query = raw_text.lower()
-            for m in interaction.guild.members:
-                if query in m.name.lower() or (m.nick and query in m.nick.lower()):
-                    target_member = m
-                    break
-
-        if not target_member:
-            await interaction.response.send_message(f"❌ ไม่พบสมาชิก **'{raw_text}'** ในเซิร์ฟเวอร์นี้ กรุณาตรวจสอบชื่อหรือ User ID อีกครั้ง", ephemeral=True)
-            return
-
-        user_id_str = str(target_member.id)
         data = load_json("leadership.json")
         if not data:
             data = {}
@@ -356,7 +341,7 @@ class LeaderAddModal(discord.ui.Modal, title="🛠️ เพิ่มข้อ�
         })
         save_json("leadership.json", data)
 
-        await interaction.response.send_message(f"✅ เพิ่ม {target_member.mention} เข้าทำเนียบในตำแหน่ง **{custom_title}** เรียบร้อยแล้ว!", ephemeral=True)
+        await interaction.response.send_message(f"✅ เพิ่ม {self.target_user.mention} เข้าทำเนียบในตำแหน่ง **{custom_title}** เรียบร้อยแล้ว!", ephemeral=True)
 
 class LeaderEditModal(discord.ui.Modal):
     def __init__(self, user_id: str, old_title: str, old_duty: str):
@@ -449,6 +434,19 @@ class LeaderSelectView(discord.ui.View):
         super().__init__(timeout=60)
         self.add_item(LeaderSelectDropdown(data))
 
+class LeaderAddMemberSelect(discord.ui.UserSelect):
+    def __init__(self):
+        super().__init__(placeholder="👤 เลือกสมาชิกที่จะเพิ่มเข้าทำเนียบ...", min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_user = self.values[0]
+        await interaction.response.send_modal(LeaderAddModal(selected_user))
+
+class LeaderAddMemberView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=60)
+        self.add_item(LeaderAddMemberSelect())
+
 class LeaderRemoveSelect(discord.ui.Select):
     def __init__(self, data: dict):
         options = []
@@ -514,13 +512,21 @@ def create_leadership_embed(guild: discord.Guild = None):
             duty = item["duty"]
             title_str = f" `[{title}]`" if title else ""
             
-            member_display = f"<@{uid}>"
+            # ดึงชื่อ Display Name ออกมาแสดงผลเป็นตัวหนังสือตรงๆ เพื่อให้ทุกคนเห็นชื่อสวยงามทั้งคอมและมือถือ
+            member_name = f"User ID: {uid}"
             if guild:
                 member = guild.get_member(uid)
                 if member:
-                    member_display = member.mention
+                    member_name = member.display_name
+                else:
+                    try:
+                        fetched_member = guild.get_member(uid) or bot.get_user(uid)
+                        if fetched_member:
+                            member_name = fetched_member.display_name if hasattr(fetched_member, "display_name") else fetched_member.name
+                    except Exception:
+                        pass
 
-            lines.append(f"• {member_display}{title_str} — **หน้าที่:** {duty}")
+            lines.append(f"• **{member_name}**{title_str} — **หน้าที่:** {duty}")
         return "\n".join(lines)
 
     for cat in data:
@@ -549,8 +555,7 @@ class LeadershipAdminView(discord.ui.View):
         if not has_permission:
             await interaction.response.send_message("❌ เฉพาะผู้มียศ **Super Admin** เท่านั้นที่มีสิทธิ์จัดการข้อมูลนี้!", ephemeral=True)
             return
-        # เปิด Modal ทันทีเพื่อป้องกันปัญหา Timeout บนมือถือ
-        await interaction.response.send_modal(LeaderAddModal())
+        await interaction.response.send_message("👉 กรุณาเลือกสมาชิกที่ต้องการเพิ่มจากเมนูด้านล่าง:", view=LeaderAddMemberView(), ephemeral=True)
 
     @discord.ui.button(label="✏️ แก้ไขข้อมูล", style=discord.ButtonStyle.blurple, custom_id="admin_edit_leader")
     async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -579,6 +584,7 @@ class LeadershipAdminView(discord.ui.View):
             return
 
         await interaction.response.send_message("👉 กรุณาเลือกผู้บริหารที่ต้องการลบ:", view=LeaderRemoveView(data), ephemeral=True)
+
 
 # ==================== 🎙️ 5. ระบบเช็คชื่อห้องเสียง ====================
 class AttendanceView(discord.ui.View):
