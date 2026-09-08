@@ -339,7 +339,7 @@ class LeaderEditModal(discord.ui.Modal):
         })
         save_json("leadership.json", data)
 
-        await interaction.response.send_message(f"✅ อัปเดตข้อมูลของ <@{self.target_user_id}> เรียบร้อยแล้ว!", ephemeral=True)
+        await interaction.response.send_message(f"✅ อัปเดตข้อมูลเรียบร้อยแล้ว!", ephemeral=True)
 
 class LeaderSelectDropdown(discord.ui.Select):
     def __init__(self, data: dict):
@@ -472,7 +472,7 @@ class LeaderRemoveView(discord.ui.View):
         super().__init__(timeout=60)
         self.add_item(LeaderRemoveSelect(data))
 
-def create_leadership_embed():
+def create_leadership_embed(guild: discord.Guild = None):
     data = load_json("leadership.json")
     
     embed = discord.Embed(
@@ -493,11 +493,18 @@ def create_leadership_embed():
             return "*(ยังไม่มีข้อมูล)*"
         lines = []
         for item in user_list:
-            uid = item["user_id"]
+            uid = int(item["user_id"])
             title = item.get("title", "")
             duty = item["duty"]
             title_str = f" `[{title}]`" if title else ""
-            lines.append(f"• <@{uid}>{title_str} — **หน้าที่:** {duty}")
+            
+            member_display = f"<@{uid}>"
+            if guild:
+                member = guild.get_member(uid)
+                if member:
+                    member_display = member.mention
+
+            lines.append(f"• {member_display}{title_str} — **หน้าที่:** {duty}")
         return "\n".join(lines)
 
     for cat in default_order:
@@ -519,7 +526,7 @@ class LeadershipView(discord.ui.View):
     @discord.ui.button(label="🔄 รีเฟรชข้อมูล", style=discord.ButtonStyle.secondary, custom_id="refresh_leadership_board")
     async def refresh_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
-        embed = create_leadership_embed()
+        embed = create_leadership_embed(interaction.guild)
         await interaction.message.edit(embed=embed, view=self)
 
 class LeadershipAdminView(discord.ui.View):
@@ -1065,7 +1072,7 @@ async def guildmember(interaction: discord.Interaction):
 @bot.tree.command(name="setup-leadership", description="[Admin] ส่งบอร์ดทำเนียบบริหารประจำกิลด์")
 @app_commands.default_permissions(administrator=True)
 async def setup_leadership(interaction: discord.Interaction):
-    embed = create_leadership_embed()
+    embed = create_leadership_embed(interaction.guild)
     await interaction.channel.send(embed=embed, view=LeadershipView())
     await interaction.response.send_message("สร้างบอร์ดทำเนียบบริหารเรียบร้อย!", ephemeral=True)
 
