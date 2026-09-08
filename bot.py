@@ -101,7 +101,7 @@ class GuildModal(discord.ui.Modal, title="ยืนยันกิลด์พ�
             full_name = matched_guild["name"]
             new_nickname = f"[{abbr}] {suffix}"
 
-            # บันทึกข้อมูลตำแหน่งเก็บไว้ใน alliance.json ร่วมด้วย
+            # บันทึกข้อมูลตำแหน่งเก็บไว้ใน alliance.json
             alliance_data = load_json("alliance.json")
             if not isinstance(alliance_data, dict):
                 alliance_data = {}
@@ -670,13 +670,13 @@ class AttendanceView(discord.ui.View):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-# ==================== 📊 6. กระดานสถิติพันมิตร (อัปเดตแสดงจำนวนคน และรายชื่อ+ตำแหน่ง) ====================
+# ==================== 📊 6. กระดานสถิติพันมิตร (เวอร์ชันอัปเดตเช็กยศจริงแบบเรียลไทม์) ====================
 def create_stats_embed(guild):
     guilds = load_json("guilds.json")
     alliance_data = load_json("alliance.json")
     alliance_members = alliance_data.get("members", {}) if isinstance(alliance_data, dict) else {}
 
-    # รวบรวมข้อมูลตามกิลด์
+    # รวบรวมข้อมูลโครงสร้างกิลด์
     stats = {}
     for g in guilds:
         abbr = g["abbr"].upper()
@@ -687,37 +687,29 @@ def create_stats_embed(guild):
         }
 
     total_members = 0
-
-    # ตรวจสอบสมาชิกผ่านยศ ROLE_ID หรือผ่านระบบบันทึกใน alliance.json
     role_alliance = guild.get_role(ROLE_ID)
-    checked_uids = set()
 
-    # ดึงข้อมูลจากกิลด์พันมิตรที่บันทึกผ่าน Modal
-    for uid_str, info in alliance_members.items():
-        member = guild.get_member(int(uid_str))
-        if member:
-            abbr = info.get("abbr", "").upper()
-            nickname = info.get("nickname", member.display_name)
-            position = info.get("position", "สมาชิก")
-
-            if abbr in stats:
-                stats[abbr]["count"] += 1
-                stats[abbr]["members_detail"].append(f"• **{nickname}** `[{position}]` ({member.mention})")
-                total_members += 1
-                checked_uids.add(member.id)
-
-    # ตรวจสอบเพิ่มเติมสำหรับคนที่มี ROLE_ID แต่ยังไม่ได้กรอกฟอร์ม
     if role_alliance:
         for member in role_alliance.members:
-            if member.id in checked_uids:
-                continue
+            uid_str = str(member.id)
             display_name = member.display_name.upper()
-            for abbr, data in stats.items():
+            
+            # ค้นหาว่าชื่อเล่นหรือชื่อในดิสตรงกับกิลด์ย่อไหน
+            matched_abbr = None
+            for abbr in stats.keys():
                 if display_name.startswith(f"[{abbr}]"):
-                    data["count"] += 1
-                    data["members_detail"].append(f"• **{member.display_name}** `[สมาชิก]` ({member.mention})")
-                    total_members += 1
+                    matched_abbr = abbr
                     break
+
+            if matched_abbr:
+                # ดึงข้อมูลตำแหน่งที่เคยกรอกไว้ในฟอร์ม (ถ้ามี) ถ้าไม่มีให้ใช้ค่าเริ่มต้น "สมาชิก"
+                user_info = alliance_members.get(uid_str, {})
+                nickname = user_info.get("nickname", member.display_name)
+                position = user_info.get("position", "สมาชิก")
+
+                stats[matched_abbr]["count"] += 1
+                stats[matched_abbr]["members_detail"].append(f"• **{nickname}** `[{position}]` ({member.mention})")
+                total_members += 1
 
     embed = discord.Embed(
         title="📊 สถิติและทำเนียบกิลด์พันมิตร",
