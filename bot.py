@@ -2,6 +2,7 @@ from flask import Flask
 from threading import Thread
 import json
 import os
+import re
 from datetime import datetime
 import discord
 from discord import app_commands
@@ -32,6 +33,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 ROLE_ID = 1535266021462511737         # ยศพันมิตรสำหรับสมาชิก
 ADMIN_ROLE_ID = 1535263803548110908   # ยศแอดมินหลังบ้าน
 SCRIM_SCHEDULE_CHANNEL_ID = 1544949197520764972 # ไอดีห้องกำหนดการกระชับมิตร
+ROLE_GUILD_MEMBER = 1535265895524466839 # ไอดียศสมาชิกกิลด์หลัก
 
 def load_json(filename):
     if not os.path.exists(filename):
@@ -151,18 +153,54 @@ class GuildView(discord.ui.View):
         await interaction.response.send_modal(GuildModal())
 
 
+# --- 🛡️ ระบบจัดการรายชื่อและถอดยศกิลด์ผ่านยศ ---
+class GuildManagementModal(discord.ui.Modal, title="🛠️ ระบบถอดยศสมาชิกกิลด์ด้วยเลขรหัส"):
+    id_input = discord.ui.TextInput(
+        label="กรอกเลขประจำตัวสมาชิก (เช่น 52, 93)",
+        placeholder="พิมพ์เฉพาะตัวเลขในวงเล็บ...",
+        style=discord.TextStyle.short,
+        required=True
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        target_code = self.id_input.value.strip()
+        guild_role = interaction.guild.get_role(ROLE_GUILD_MEMBER)
+        
+        if not guild_role:
+            await interaction.response.send_message("❌ ไม่พบยศสมาชิกกิลด์ในระบบ กรุณาตรวจสอบ Role ID", ephemeral=True)
+            return
+        
+        matched_member = None
+        pattern = re.compile(rf"\(0*{target_code}\)(?!\d)")
+        
+        for member in guild_role.members:
+            if pattern.search(member.display_name):
+                matched_member = member
+                break
+
+        if not matched_member:
+            await interaction.response.send_message(f"❌ ไม่พบสมาชิกที่ **ถือยศกิลด์อยู่** และมีเลขประจำตัว **({target_code})** ในระบบ", ephemeral=True)
+            return
+
+        try:
+            await matched_member.remove_roles(guild_role, reason=f"แอดมิน {interaction.user} ถอดยศกิลด์ผ่านเลขรหัส ({target_code})")
+            await interaction.response.send_message(f"✅ ทำการถอดยศกิลด์ออกจาก **{matched_member.display_name}** (รหัส `{target_code}`) เรียบร้อยแล้ว!", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ เกิดข้อผิดพลาดในการถอดยศ: `{e}`", ephemeral=True)
+
+
 class AdminDashboardView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="➕ เพิ่มกิลด์", style=discord.ButtonStyle.blurple, custom_id="admin_add_guild")
+    @discord.ui.button(label="➕ เพิ่มกิลด์", style=discord.ButtonStyle.blurple, custom_id="admin_add_guild", row=0)
     async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not check_admin(interaction):
             await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
             return
         await interaction.response.send_modal(AddGuildModal())
 
-    @discord.ui.button(label="📋 ดูรายชื่อกิลด์", style=discord.ButtonStyle.gray, custom_id="admin_list_guild")
+    @discord.ui.button(label="📋 ดูรายชื่อกิลด์", style=discord.ButtonStyle.gray, custom_id="admin_list_guild", row=0)
     async def list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not check_admin(interaction):
             await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
@@ -174,12 +212,67 @@ class AdminDashboardView(discord.ui.View):
         guild_list_str = "\n".join([f"- **{g['name']}** (`{g['abbr']}`)" for g in guilds])
         await interaction.response.send_message(f"📋 **รายชื่อกิลด์:**\n{guild_list_str}", ephemeral=True)
 
-    @discord.ui.button(label="🗑️ ลบกิลด์", style=discord.ButtonStyle.red, custom_id="admin_remove_guild")
+    @discord.ui.button(label="🗑️ ลบกิลด์", style=discord.ButtonStyle.red, custom_id="admin_remove_guild", row=0)
     async def remove_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not check_admin(interaction):
             await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
             return
         await interaction.response.send_modal(RemoveGuildModal())
+
+    @discord.ui.button(label="📋 เช็กลิสต์สมาชิกลูกกิลด์", style=discord.ButtonStyle.primary, custom_id="admin_guild_roster", row=1)
+    async def roster_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not check_admin(interaction):
+            await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        guild_role = interaction.guild.get_role(ROLE_GUILD_MEMBER)
+        if not guild_role:
+            await interaction.followup.send("❌ ไม่พบยศสมาชิกกิลด์ในเซิร์ฟเวอร์", ephemeral=True)
+            return
+
+        members_data = []
+        pattern = re.compile(r"\((\d+)\)")
+
+        for member in guild_role.members:
+            match = pattern.search(member.display_name)
+            if match:
+                code_num = int(match.group(1))
+                members_data.append((code_num, member))
+            else:
+                members_data.append((99999, member))
+
+        members_data.sort(key=lambda x: x[0])
+
+        if not members_data:
+            await interaction.followup.send("❌ ปัจจุบันยังไม่มีสมาชิกคนใดถือยศกิลด์นี้", ephemeral=True)
+            return
+
+        roster_list = []
+        for code, member in members_data:
+            if code == 99999:
+                roster_list.append(f"• [ไม่มีเลข] {member.mention} — `{member.display_name}`")
+            else:
+                roster_list.append(f"• **({code})** {member.mention} — `{member.display_name}`")
+
+        description_text = f"📊 **ยอดสมาชิกลูกกิลด์ทั้งหมด:** **{len(members_data)}** คน\n\n" + "\n".join(roster_list)
+        if len(description_text) > 4000:
+            description_text = description_text[:3950] + "\n\n*(รายชื่อยาวเกินไป แสดงผลบางส่วน)*"
+
+        embed = discord.Embed(
+            title="🛡️ รายชื่อสมาชิกลูกกิลด์ทั้งหมด (จากยศ)",
+            description=description_text,
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text="ระบบจัดการกิลด์")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="❌ ถอดยศด้วยเลขรหัส", style=discord.ButtonStyle.danger, custom_id="admin_guild_unassign", row=1)
+    async def unassign_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not check_admin(interaction):
+            await interaction.response.send_message("❌ สำหรับแอดมินเท่านั้น", ephemeral=True)
+            return
+        await interaction.response.send_modal(GuildManagementModal())
 
 
 # --- 🎙️ ระบบเช็คชื่อห้องเสียง ---
