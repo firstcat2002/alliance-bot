@@ -1011,15 +1011,26 @@ class ScrimSetupView(discord.ui.View):
 
         await interaction.response.defer(ephemeral=True)
 
+        # 1. สร้างเธรดแบบ Private ตามเดิมเพื่อให้มีความเป็นส่วนตัว
         thread = await interaction.channel.create_thread(
             name=f"scrim-{interaction.user.name}",
             type=discord.ChannelType.private_thread,
             auto_archive_duration=1440
         )
+        
+        # 2. เพิ่มตัวผู้กดปุ่ม (ลูกค้า) เข้าเธรด
         await thread.add_user(interaction.user)
 
+        # 3. ค้นหาและดึงทุกคนที่มียศแอดมิน (ADMIN_ROLE_ID) เข้ามาในเธรดนี้ด้วยอัตโนมัติ
+        for member in interaction.guild.members:
+            if any(role.id == ADMIN_ROLE_ID for role in member.roles):
+                try:
+                    await thread.add_user(member)
+                except Exception as e:
+                    print(f"Could not add admin {member.name} to thread: {e}")
+
         instructions = (
-            f"👋 สวัสดีคุณ {interaction.user.mention}!\n"
+            f"👋 สวัสดีคุณ {interaction.user.mention} และทีมงานทุกท่าน!\n"
             "กรุณากดปุ่ม **'📝 กรอกฟอร์มรายละเอียด'** ด้านล่างเพื่อกรอกข้อมูลการแข่ง"
         )
 
