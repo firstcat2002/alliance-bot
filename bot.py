@@ -296,10 +296,16 @@ class LeaderEditModal(discord.ui.Modal, title="🛠️ จัดการข้�
         required=True
     )
     role_type_input = discord.ui.TextInput(
-        label="ตำแหน่ง (พิมพ์: master, co, advisor, sub)",
-        placeholder="master = หัวกิลด์ | co = รองกิลด์ | advisor = ที่ปรึกษา | sub = แอดมินย่อย",
+        label="หมวดหมู่ตำแหน่งหลัก",
+        placeholder="พิมพ์: หัวกิลด์, รองกิลด์, ที่ปรึกษา หรือ แอดมินย่อย",
         required=True,
-        max_length=10
+        max_length=30
+    )
+    custom_title_input = discord.ui.TextInput(
+        label="ชื่อตำแหน่งที่ต้องการแสดง (อิสระ)",
+        placeholder="เช่น หัวหน้าหน่วยจู่โจม, ผู้ช่วยฝ่ายกิจกรรม ฯลฯ",
+        required=True,
+        max_length=50
     )
     duty_input = discord.ui.TextInput(
         label="หน้าที่ความรับผิดชอบ",
@@ -310,32 +316,28 @@ class LeaderEditModal(discord.ui.Modal, title="🛠️ จัดการข้�
 
     async def on_submit(self, interaction: discord.Interaction):
         user_id = self.user_id_input.value.strip()
-        r_type = self.role_type_input.value.strip().lower()
+        category = self.role_type_input.value.strip()
+        custom_title = self.custom_title_input.value.strip()
         duty = self.duty_input.value.strip()
 
-        type_mapping = {
-            "master": "guild_master",
-            "co": "co_leader",
-            "advisor": "advisor",
-            "sub": "sub_admin"
-        }
-
-        if r_type not in type_mapping:
-            await interaction.response.send_message("❌ ตำแหน่งไม่ถูกต้อง! กรุณากรอก master, co, advisor หรือ sub เท่านั้น", ephemeral=True)
-            return
-
-        key = type_mapping[r_type]
         data = load_json("leadership.json")
         if not data:
-            data = {"guild_master": [], "co_leader": [], "advisor": [], "sub_admin": []}
+            data = {}
 
-        for k in data:
-            data[k] = [item for item in data[k] if item["user_id"] != user_id]
+        for cat in data:
+            data[cat] = [item for item in data[cat] if item["user_id"] != user_id]
 
-        data[key].append({"user_id": user_id, "duty": duty})
+        if category not in data:
+            data[category] = []
+
+        data[category].append({
+            "user_id": user_id,
+            "title": custom_title,
+            "duty": duty
+        })
         save_json("leadership.json", data)
 
-        await interaction.response.send_message(f"✅ บันทึกข้อมูลทำเนียบเรียบร้อยแล้ว!", ephemeral=True)
+        await interaction.response.send_message(f"✅ บันทึกข้อมูลตำแหน่ง **{custom_title}** เรียบร้อยแล้ว!", ephemeral=True)
 
 class LeaderRemoveModal(discord.ui.Modal, title="🗑️ ลบข้อมูลผู้บริหาร"):
     user_id_input = discord.ui.TextInput(
@@ -352,10 +354,10 @@ class LeaderRemoveModal(discord.ui.Modal, title="🗑️ ลบข้อมู�
             return
 
         removed = False
-        for k in data:
-            before_len = len(data[k])
-            data[k] = [item for item in data[k] if item["user_id"] != user_id]
-            if len(data[k]) < before_len:
+        for cat in data:
+            before_len = len(data[cat])
+            data[cat] = [item for item in data[cat] if item["user_id"] != user_id]
+            if len(data[cat]) < before_len:
                 removed = True
 
         if removed:
@@ -366,14 +368,19 @@ class LeaderRemoveModal(discord.ui.Modal, title="🗑️ ลบข้อมู�
 
 def create_leadership_embed():
     data = load_json("leadership.json")
-    if not data:
-        data = {"guild_master": [], "co_leader": [], "advisor": [], "sub_admin": []}
-
+    
     embed = discord.Embed(
         title="🏛️ ทำเนียบผู้บริหารและทีมงานกิลด์",
         description="โครงสร้างการปกครองและสายงานความรับผิดชอบภายในกิลด์",
         color=discord.Color.gold()
     )
+
+    if not data:
+        embed.add_field(name="สถานะ", value="*(ยังไม่มีข้อมูลผู้บริหารในระบบ)*", inline=False)
+        return embed
+
+    default_order = ["หัวกิลด์", "รองกิลด์", "ที่ปรึกษา", "แอดมินย่อย"]
+    processed_categories = set()
 
     def format_section(user_list):
         if not user_list:
@@ -381,14 +388,20 @@ def create_leadership_embed():
         lines = []
         for item in user_list:
             uid = item["user_id"]
+            title = item.get("title", "")
             duty = item["duty"]
-            lines.append(f"• <@{uid}> — **หน้าที่:** {duty}")
+            title_str = f" `[{title}]`" if title else ""
+            lines.append(f"• <@{uid}>{title_str} — **หน้าที่:** {duty}")
         return "\n".join(lines)
 
-    embed.add_field(name="👑 หัวกิลด์ (Guild Master)", value=format_section(data.get("guild_master", [])), inline=False)
-    embed.add_field(name="🛡️ รองกิลด์ (Co-Leader)", value=format_section(data.get("co_leader", [])), inline=False)
-    embed.add_field(name="💡 ที่ปรึกษา (Advisor)", value=format_section(data.get("advisor", [])), inline=False)
-    embed.add_field(name="⚔️ แอดมินและผู้ช่วยย่อย", value=format_section(data.get("sub_admin", [])), inline=False)
+    for cat in default_order:
+        if cat in data:
+            embed.add_field(name=f"📌 {cat}", value=format_section(data[cat]), inline=False)
+            processed_categories.add(cat)
+
+    for cat in data:
+        if cat not in processed_categories:
+            embed.add_field(name=f"📌 {cat}", value=format_section(data[cat]), inline=False)
 
     embed.set_footer(text="อัปเดตข้อมูลผ่านระบบหลังบ้าน Super Admin")
     return embed
