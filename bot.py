@@ -121,7 +121,6 @@ class GuildModal(discord.ui.Modal, title="ยืนยันกิลด์พ�
                 await interaction.user.add_roles(role)
                 await interaction.response.send_message(
                     f"✅ ยืนยันสำเร็จ! กิลด์ **{full_name}**\nระบบเปลี่ยนชื่อเป็น **{new_nickname}** และบันทึกตำแหน่ง **{position}** เรียบร้อย",
-                    app_commands=True if hasattr(app_commands, "True") else None,
                     ephemeral=True,
                 )
             except discord.Forbidden:
